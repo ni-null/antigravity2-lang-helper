@@ -1,12 +1,12 @@
-Set-StrictMode -Version 2.0
+﻿Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $upstreamRepository = 'qqxpee/antigravity2-cn'
 $tempRoot = $null
 $locationPushed = $false
-$originalInputEncoding = [Console]::InputEncoding
-$originalOutputEncoding = [Console]::OutputEncoding
-$originalPowerShellOutputEncoding = $global:OutputEncoding
+$originalInputEncoding = $null
+$originalOutputEncoding = $null
+$originalPowerShellOutputEncoding = $null
 $originalCodePage = $null
 $caughtError = $null
 
@@ -47,14 +47,198 @@ function Write-Step {
     Write-Host $Text -ForegroundColor White
 }
 
+function Get-CommandVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        $Command
+    )
+
+    try {
+        $versionOutput = @(& $Command.Path --version 2>$null)
+        if ($LASTEXITCODE -ne 0 -or $versionOutput.Count -eq 0) {
+            return $null
+        }
+        return ([string]$versionOutput[0]).Trim()
+    }
+    catch {
+        return $null
+    }
+}
+
+function Show-ManualNodeInstall {
+    Write-Host ''
+    Write-Host '    請手動安裝 Node.js LTS / 请手动安装 Node.js LTS：' -ForegroundColor Yellow
+    Write-Host '    https://nodejs.org/' -ForegroundColor Cyan
+    Write-Host ''
+    Write-Host '    安裝完成後，請關閉此視窗並重新執行本腳本。' -ForegroundColor Yellow
+    Write-Host '    安装完成后，请关闭此窗口并重新运行本脚本。' -ForegroundColor Yellow
+}
+
+function Invoke-NodeLtsInstall {
+    param(
+        [switch]$Force
+    )
+
+    $wingetCommand = Get-Command 'winget.exe' -ErrorAction SilentlyContinue
+    if (-not $wingetCommand) {
+        $wingetCommand = Get-Command 'winget' -ErrorAction SilentlyContinue
+    }
+
+    if (-not $wingetCommand) {
+        Write-Host ''
+        Write-Host '    [!] 找不到 winget，無法自動安裝。 / 找不到 winget，无法自动安装。' -ForegroundColor Yellow
+        Show-ManualNodeInstall
+        return $false
+    }
+
+    $installArguments = @(
+        'install',
+        '-e',
+        '--id', 'OpenJS.NodeJS.LTS',
+        '--source', 'winget',
+        '--accept-package-agreements',
+        '--accept-source-agreements'
+    )
+    if ($Force) {
+        $installArguments += '--force'
+    }
+
+    Write-Host ''
+    Write-Host '  Node.js LTS 安裝 / 安装' -ForegroundColor Magenta
+    Write-Host ''
+    Write-Host '    即將執行 / 即将执行：' -ForegroundColor DarkGray
+    Write-Host ('    winget ' + ($installArguments -join ' ')) -ForegroundColor Cyan
+    Write-Host ''
+    Write-MenuOption -Key '1' -Text '確認安裝 / 确认安装' -Color Green
+    Write-MenuOption -Key '0' -Text '取消' -Color DarkGray
+    Write-Host ''
+
+    while ($true) {
+        $choice = Read-Host '請選擇 / 请选择 [1/0]'
+        switch ($choice) {
+            '1' {
+                Write-Host ''
+                Write-Step '正在透過 winget 安裝 Node.js LTS...'
+                & $wingetCommand.Path @installArguments | Out-Host
+                $wingetExitCode = $LASTEXITCODE
+
+                if ($wingetExitCode -eq 0) {
+                    Write-Host ''
+                    Write-Host '[OK] Node.js LTS 安裝命令已完成。' -ForegroundColor Green
+                    Write-Host '[i] 請關閉此視窗，重新開啟 PowerShell，再執行本腳本。' -ForegroundColor Yellow
+                    Write-Host '[i] 请关闭此窗口，重新打开 PowerShell，再运行本脚本。' -ForegroundColor Yellow
+                    return $true
+                }
+
+                Write-Host ''
+                Write-Host "[X] winget 安裝失敗，結束代碼：$wingetExitCode" -ForegroundColor Red
+                Show-ManualNodeInstall
+                return $false
+            }
+            '0' {
+                Write-Host '[i] 已取消 Node.js 安裝。' -ForegroundColor DarkGray
+                return $false
+            }
+            default {
+                Write-Host '[!] 選項無效，請輸入 1 或 0。 / 选项无效，请输入 1 或 0。' -ForegroundColor Yellow
+            }
+        }
+    }
+}
+
+function Test-NodeEnvironment {
+    Write-Host '  環境檢測 / 环境检测' -ForegroundColor Magenta
+    Write-Host ''
+
+    $nodeCommand = Get-Command 'node.exe' -ErrorAction SilentlyContinue
+    if (-not $nodeCommand) {
+        $nodeCommand = Get-Command 'node' -ErrorAction SilentlyContinue
+    }
+    if (-not $nodeCommand) {
+        Write-Host '    [X] Node.js：未安裝 / 未安装' -ForegroundColor Red
+        Write-Host '    中文安裝需要 Node.js、npm 與 npx。' -ForegroundColor DarkGray
+        [void](Invoke-NodeLtsInstall)
+        return $null
+    }
+
+    $nodeVersion = Get-CommandVersion -Command $nodeCommand
+    if (-not $nodeVersion) {
+        Write-Host '    [X] Node.js：無法執行 / 无法运行' -ForegroundColor Red
+        Write-Host '    Node.js 環境可能已損壞，建議重新安裝 LTS。' -ForegroundColor Yellow
+        [void](Invoke-NodeLtsInstall -Force)
+        return $null
+    }
+    Write-Host '    [OK] ' -NoNewline -ForegroundColor Green
+    Write-Host "Node.js：$nodeVersion" -ForegroundColor White
+
+    $npmCommand = Get-Command 'npm.cmd' -ErrorAction SilentlyContinue
+    if (-not $npmCommand) {
+        $npmCommand = Get-Command 'npm' -ErrorAction SilentlyContinue
+    }
+    $npmVersion = if ($npmCommand) { Get-CommandVersion -Command $npmCommand } else { $null }
+    if ($npmVersion) {
+        Write-Host '    [OK] ' -NoNewline -ForegroundColor Green
+        Write-Host "npm：v$npmVersion" -ForegroundColor White
+    }
+    else {
+        Write-Host '    [!] npm：未找到' -ForegroundColor Yellow
+    }
+
+    $npxCommand = Get-Command 'npx.cmd' -ErrorAction SilentlyContinue
+    if (-not $npxCommand) {
+        $npxCommand = Get-Command 'npx' -ErrorAction SilentlyContinue
+    }
+    $npxVersion = if ($npxCommand) { Get-CommandVersion -Command $npxCommand } else { $null }
+    if ($npxVersion) {
+        Write-Host '    [OK] ' -NoNewline -ForegroundColor Green
+        Write-Host "npx：v$npxVersion" -ForegroundColor White
+    }
+    else {
+        Write-Host '    [!] npx：未找到，中文安裝功能將無法使用。' -ForegroundColor Yellow
+        $npxCommand = $null
+    }
+
+    $minimumNodeVersion = [version]'22.12.0'
+    $nodeVersionSupported = $false
+    try {
+        $parsedNodeVersion = [version]($nodeVersion.TrimStart([char]'v'))
+        $nodeVersionSupported = $parsedNodeVersion -ge $minimumNodeVersion
+    }
+    catch {
+        Write-Host '    [!] 無法判斷 Node.js 版本是否符合需求。' -ForegroundColor Yellow
+    }
+
+    if (-not $nodeVersionSupported) {
+        Write-Host "    [!] 中文安裝目前需要 Node.js $minimumNodeVersion 或更新版本。" -ForegroundColor Yellow
+    }
+
+    Write-Host ''
+    return [PSCustomObject]@{
+        Node = $nodeCommand
+        Npx = $npxCommand
+        VersionSupported = $nodeVersionSupported
+    }
+}
+
 function Wait-BeforeExit {
     Write-Host ''
     Write-Host '  ----------------------------------------------------' -ForegroundColor DarkGray
+    Write-Host '  按任意鍵結束 / 按任意键结束' -ForegroundColor DarkGray
     try {
-        [void](Read-Host '  按 Enter 鍵結束 / 按 Enter 键结束')
+        if ($Host.Name -eq 'ConsoleHost') {
+            [void]$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')
+        }
+        else {
+            [void](Read-Host)
+        }
     }
     catch {
-        # Some non-interactive hosts do not support Read-Host.
+        try {
+            & cmd.exe /d /c pause | Out-Null
+        }
+        catch {
+            # No interactive console is available.
+        }
     }
 }
 
@@ -78,7 +262,6 @@ function Initialize-Utf8Console {
 }
 
 function Select-Language {
-    Write-Banner
     Write-Host '  請選擇操作 / 请选择操作' -ForegroundColor Magenta
     Write-Host ''
     Write-MenuOption -Key '1' -Text '安裝 繁體中文' -Color Green
@@ -198,11 +381,22 @@ function Get-UpstreamPackage {
 }
 
 try {
+    $originalInputEncoding = [Console]::InputEncoding
+    $originalOutputEncoding = [Console]::OutputEncoding
+    $originalPowerShellOutputEncoding = $global:OutputEncoding
     $originalCodePage = Initialize-Utf8Console
 
     if ($env:OS -ne 'Windows_NT') {
         throw 'This helper currently supports Windows only.'
     }
+
+    Write-Banner
+    $nodeEnvironment = Test-NodeEnvironment
+    if (-not $nodeEnvironment) {
+        return
+    }
+    $nodeCommand = $nodeEnvironment.Node
+    $npxCommand = $nodeEnvironment.Npx
 
     $Language = Select-Language
     if (-not $Language) {
@@ -216,21 +410,18 @@ try {
         $BrandTitle = Select-BrandTitle -SelectedLanguage $Language
     }
 
-    $nodeCommand = Get-Command 'node.exe' -ErrorAction SilentlyContinue
-    if (-not $nodeCommand) {
-        $nodeCommand = Get-Command 'node' -ErrorAction SilentlyContinue
-    }
-    if (-not $nodeCommand) {
-        throw '找不到 Node.js。請安裝 Node.js LTS，重新開啟 PowerShell 後再執行。'
-    }
-
     if ($Language -ne 'en') {
-        $npxCommand = Get-Command 'npx.cmd' -ErrorAction SilentlyContinue
-        if (-not $npxCommand) {
-            $npxCommand = Get-Command 'npx' -ErrorAction SilentlyContinue
+        if (-not $nodeEnvironment.VersionSupported) {
+            Write-Host ''
+            Write-Host '[!] Node.js 版本過舊，無法執行目前的 ASAR 工具。' -ForegroundColor Yellow
+            [void](Invoke-NodeLtsInstall -Force)
+            return
         }
         if (-not $npxCommand) {
-            throw '找不到 npx。請修復或重新安裝 Node.js LTS 後再執行。'
+            Write-Host ''
+            Write-Host '[!] npm/npx 環境不完整，建議重新安裝 Node.js LTS。' -ForegroundColor Yellow
+            [void](Invoke-NodeLtsInstall -Force)
+            return
         }
     }
 
@@ -303,14 +494,26 @@ finally {
         Remove-Item -LiteralPath $tempRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    if ($env:OS -eq 'Windows_NT' -and $originalCodePage) {
-        & chcp.com $originalCodePage | Out-Null
+    try {
+        if ($env:OS -eq 'Windows_NT' -and $originalCodePage) {
+            & chcp.com $originalCodePage | Out-Null
+        }
+        if ($originalInputEncoding) {
+            [Console]::InputEncoding = $originalInputEncoding
+        }
+        if ($originalOutputEncoding) {
+            [Console]::OutputEncoding = $originalOutputEncoding
+        }
+        if ($originalPowerShellOutputEncoding) {
+            $global:OutputEncoding = $originalPowerShellOutputEncoding
+        }
     }
-    [Console]::InputEncoding = $originalInputEncoding
-    [Console]::OutputEncoding = $originalOutputEncoding
-    $global:OutputEncoding = $originalPowerShellOutputEncoding
-
-    Wait-BeforeExit
+    catch {
+        # Console restoration must not skip the final pause.
+    }
+    finally {
+        Wait-BeforeExit
+    }
 }
 
 if ($caughtError) {
